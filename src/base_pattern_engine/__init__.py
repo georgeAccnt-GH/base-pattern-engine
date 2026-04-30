@@ -1,4 +1,4 @@
-"""Self-copying package instantiation engine."""
+"""Package instantiation engine."""
 
 from .core import PACKAGE_NAME, print_package_name
 from .engine import instantiate

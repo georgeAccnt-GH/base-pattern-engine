@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "base-pattern-engine"
 version = "0.1.0"
-description = "A minimal Python package that can reproduce itself."
+description = "A minimal Python package instantiation engine."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -17,6 +17,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
 ]
+dependencies = [
+  "tomlkit>=0.13",
+]
 
 [project.scripts]
 base-pattern-engine = "base_pattern_engine.cli:main"
@@ -24,6 +27,7 @@ base-pattern-engine = "base_pattern_engine.cli:main"
 [project.optional-dependencies]
 test = [
   "pytest>=8",
+  "setuptools>=68",
 ]
 
 [tool.setuptools.packages.find]

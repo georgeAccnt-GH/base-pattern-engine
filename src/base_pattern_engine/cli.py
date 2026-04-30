@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+from typing import Optional
 
-from .engine import instantiate
+from .engine import DEFAULT_LICENSE_TYPE, DEFAULT_OWNER_NAME, instantiate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,8 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
     instantiate_parser.add_argument(
         "--license",
         dest="license_type",
-        default="MIT",
-        help="License to write into the new package. Currently supports MIT.",
+        default=DEFAULT_LICENSE_TYPE,
+        help="Generated package license expression. Use NONE to omit license metadata and the LICENSE file.",
+    )
+    instantiate_parser.add_argument(
+        "--license-file",
+        help="Path to custom license text to write as the generated package LICENSE file.",
+    )
+    instantiate_parser.add_argument(
+        "--owner-name",
+        default=DEFAULT_OWNER_NAME,
+        help="Generated package author and license copyright holder.",
     )
     instantiate_parser.add_argument(
         "--overwrite",
@@ -44,19 +55,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "instantiate":
         try:
+            license_text = _read_license_file(args.license_file)
             created_path = instantiate(
                 package_name=args.package_name,
                 output_path=args.output_path,
                 license_type=args.license_type,
                 overwrite=args.overwrite,
+                owner_name=args.owner_name,
+                license_text=license_text,
             )
-        except (FileExistsError, ValueError) as error:
+        except (FileExistsError, OSError, ValueError) as error:
             parser.error(str(error))
 
         print(f"Created {created_path}")
@@ -64,6 +78,13 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.print_help()
     return 0
+
+
+def _read_license_file(license_file: Optional[str]) -> Optional[str]:
+    if license_file is None:
+        return None
+
+    return Path(license_file).expanduser().read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

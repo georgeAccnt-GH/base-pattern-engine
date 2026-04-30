@@ -3,14 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "base-pattern-engine"
+name = "<package_distribution_name>"
 version = "0.1.0"
-description = "A minimal Python package that can reproduce itself."
+description = "A standalone Python package generated from a package instantiation pattern."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
-  { name = "George Iordanescu" }
+  { name = "Package contributors" }
 ]
 classifiers = [
   "License :: OSI Approved :: MIT License",
@@ -18,11 +18,5 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-[project.scripts]
-base-pattern-engine = "base_pattern_engine.cli:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-base_pattern_engine = ["_self/*"]

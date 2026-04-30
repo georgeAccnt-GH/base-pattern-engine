@@ -1,6 +1,6 @@
 # <package_title>
 
-A standalone Python package generated from a self-copying package pattern.
+A standalone Python package generated from a package instantiation pattern.
 
 This package contains its own source code and metadata. It does not depend on the package that generated it, and it does not include the generator's instantiation interface.
 
@@ -36,11 +36,11 @@ print_package_name()
 ```text
 <package_distribution_name>/
   pyproject.toml
-  LICENSE
-  README.md
+<generated_license_and_readme_file_lines>
+  <generated_marker_file_name>
   src/<package_import_name>/
 ```
 
 ## License
 
-MIT
+<generated_license_label>
