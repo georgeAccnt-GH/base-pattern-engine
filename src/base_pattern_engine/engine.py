@@ -6,6 +6,7 @@ import json
 import keyword
 import re
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -25,6 +26,7 @@ MIT_LICENSE_CLASSIFIER = "License :: OSI Approved :: MIT License"
 ROOT_FILE_NAMES = ("pyproject.toml", "LICENSE", "README.md")
 MARKER_FILE_NAME = ".package-instantiation.json"
 MARKER_FORMAT_VERSION = 1
+UNRESOLVED_PLACEHOLDER_PREFIXES = ("<package_", "<generated_")
 GENERATED_INIT_TEMPLATE = '''"""Generated standalone package."""
 
 from .core import PACKAGE_NAME, print_package_name
@@ -80,37 +82,45 @@ def instantiate(
     metadata_source_paths = _metadata_source_paths(metadata_source_dir, source_package_dir)
     _validate_copy_sources(source_package_dir, metadata_source_paths)
     project_dir = Path(output_path).expanduser().resolve() / target.module_name
+    backup_dir: Optional[Path] = None
 
     if project_dir.exists():
         if not overwrite:
             raise FileExistsError(
                 f"Output path already exists: {project_dir}. Use overwrite=True or --overwrite to replace it."
             )
-        _validate_overwrite_target(project_dir, target)
-        shutil.rmtree(project_dir)
+        backup_dir = _move_overwrite_target_to_backup(project_dir, target)
 
     src_dir = project_dir / "src"
     destination_package_dir = src_dir / target.module_name
 
-    project_dir.mkdir(parents=True)
-    src_dir.mkdir()
+    try:
+        project_dir.mkdir(parents=True)
+        src_dir.mkdir()
 
-    _copy_project_files(metadata_source_paths, project_dir)
+        _copy_project_files(metadata_source_paths, project_dir)
 
-    shutil.copytree(
-        source_package_dir,
-        destination_package_dir,
-        ignore=shutil.ignore_patterns(*IGNORED_COPY_PATTERNS),
-    )
+        shutil.copytree(
+            source_package_dir,
+            destination_package_dir,
+            ignore=shutil.ignore_patterns(*IGNORED_COPY_PATTERNS),
+        )
 
-    _rewrite_text_files(project_dir, _text_replacements(target, license_selection))
-    _strip_instantiation_interface(
-        project_dir,
-        destination_package_dir,
-        normalized_owner_name,
-        license_selection,
-    )
-    _write_generation_marker(project_dir, target)
+        _rewrite_text_files(project_dir, _text_replacements(target, license_selection))
+        _strip_instantiation_interface(
+            project_dir,
+            destination_package_dir,
+            normalized_owner_name,
+            license_selection,
+        )
+        _validate_generated_output(project_dir)
+        _write_generation_marker(project_dir, target)
+    except Exception:
+        _restore_overwrite_backup(project_dir, backup_dir)
+        raise
+
+    if backup_dir is not None:
+        _delete_overwrite_backup(backup_dir, target)
 
     return project_dir
 
@@ -217,9 +227,71 @@ def _is_filesystem_link(path: Path) -> bool:
     return bool(is_junction and is_junction())
 
 
+def _move_overwrite_target_to_backup(project_dir: Path, target: _PackageIdentity) -> Path:
+    _validate_overwrite_target(project_dir, target)
+    backup_dir = _unused_overwrite_backup_path(project_dir)
+    project_dir.rename(backup_dir)
+
+    try:
+        _validate_overwrite_target(backup_dir, target)
+    except Exception:
+        if not project_dir.exists():
+            backup_dir.rename(project_dir)
+        raise
+
+    return backup_dir
+
+
+def _unused_overwrite_backup_path(project_dir: Path) -> Path:
+    for _ in range(100):
+        backup_dir = project_dir.with_name(
+            f".{project_dir.name}.overwrite-backup-{uuid.uuid4().hex}"
+        )
+        if not backup_dir.exists():
+            return backup_dir
+
+    raise FileExistsError(f"Cannot allocate overwrite backup path for: {project_dir}")
+
+
+def _restore_overwrite_backup(project_dir: Path, backup_dir: Optional[Path]) -> None:
+    if backup_dir is None or not backup_dir.exists():
+        return
+
+    if project_dir.exists():
+        _delete_unmarked_project_tree(project_dir)
+
+    backup_dir.rename(project_dir)
+
+
+def _delete_overwrite_backup(backup_dir: Path, target: _PackageIdentity) -> None:
+    _validate_overwrite_target(backup_dir, target)
+    shutil.rmtree(backup_dir)
+
+
+def _delete_unmarked_project_tree(project_dir: Path) -> None:
+    if _is_filesystem_link(project_dir) or not project_dir.is_dir():
+        raise FileExistsError(f"Output path exists and is not a regular directory: {project_dir}")
+
+    try:
+        _reject_filesystem_links(project_dir)
+    except ValueError as error:
+        raise FileExistsError(
+            f"Refusing to remove directory containing symlink or junction: {project_dir}"
+        ) from error
+
+    shutil.rmtree(project_dir)
+
+
 def _validate_overwrite_target(project_dir: Path, target: _PackageIdentity) -> None:
     if _is_filesystem_link(project_dir) or not project_dir.is_dir():
         raise FileExistsError(f"Output path exists and is not a regular directory: {project_dir}")
+
+    try:
+        _reject_filesystem_links(project_dir)
+    except ValueError as error:
+        raise FileExistsError(
+            f"Refusing to overwrite directory containing symlink or junction: {project_dir}"
+        ) from error
 
     marker_path = project_dir / MARKER_FILE_NAME
     if _is_filesystem_link(marker_path) or not marker_path.is_file():
@@ -283,8 +355,8 @@ def _normalize_owner_name(owner_name: str) -> str:
 
     if not normalized_owner_name:
         raise ValueError("Owner name cannot be empty.")
-    if "\n" in normalized_owner_name or "\r" in normalized_owner_name:
-        raise ValueError("Owner name cannot contain line breaks.")
+    if _contains_control_character(normalized_owner_name):
+        raise ValueError("Owner name cannot contain control characters.")
 
     return normalized_owner_name
 
@@ -294,8 +366,8 @@ def _license_selection(license_type: str, license_text: Optional[str]) -> _Licen
 
     if not normalized_license_type:
         raise ValueError("License cannot be empty. Use 'NONE' to omit generated license metadata.")
-    if "\n" in normalized_license_type or "\r" in normalized_license_type:
-        raise ValueError("License cannot contain line breaks.")
+    if _contains_control_character(normalized_license_type):
+        raise ValueError("License cannot contain control characters.")
 
     normalized_license_text = _normalize_license_text(license_text)
     upper_license_type = normalized_license_type.upper()
@@ -332,6 +404,10 @@ def _normalize_license_text(license_text: Optional[str]) -> Optional[str]:
     return normalized_license_text
 
 
+def _contains_control_character(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
 def _title_from_module_name(module_name: str) -> str:
     return " ".join(part.capitalize() for part in module_name.split("_") if part)
 
@@ -352,6 +428,28 @@ def _rewrite_text_files(project_dir: Path, replacements: dict[str, str]) -> None
 
         if updated_text != original_text:
             file_path.write_text(updated_text, encoding="utf-8")
+
+
+def _validate_generated_output(project_dir: Path) -> None:
+    unresolved_files = []
+
+    for file_path in project_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+
+        if any(prefix in text for prefix in UNRESOLVED_PLACEHOLDER_PREFIXES):
+            unresolved_files.append(file_path.relative_to(project_dir))
+
+    if unresolved_files:
+        unresolved_list = ", ".join(str(file_path) for file_path in unresolved_files)
+        raise ValueError(
+            f"Generated output contains unresolved template placeholders: {unresolved_list}"
+        )
 
 
 def _strip_instantiation_interface(
@@ -442,6 +540,6 @@ def _rewrite_generated_license(license_path: Path, owner_name: str) -> None:
         count=1,
     )
     if substitution_count != 1:
-        raise ValueError(f"Cannot locate copyright notice in license file: {license_path}")
+        raise ValueError("Cannot locate copyright notice in generated MIT license text.")
 
     license_path.write_text(updated_text, encoding="utf-8")

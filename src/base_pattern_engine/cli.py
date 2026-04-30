@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from .engine import DEFAULT_LICENSE_TYPE, DEFAULT_OWNER_NAME, instantiate
+from .engine import DEFAULT_LICENSE_TYPE, DEFAULT_OWNER_NAME, _is_filesystem_link, instantiate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,7 +84,13 @@ def _read_license_file(license_file: Optional[str]) -> Optional[str]:
     if license_file is None:
         return None
 
-    return Path(license_file).expanduser().read_text(encoding="utf-8")
+    license_path = Path(license_file).expanduser()
+    if _is_filesystem_link(license_path):
+        raise ValueError(f"Refusing to read symlinked or junctioned license file: {license_path}")
+    if not license_path.is_file():
+        raise FileNotFoundError(f"License file does not exist or is not a regular file: {license_path}")
+
+    return license_path.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

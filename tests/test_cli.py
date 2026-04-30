@@ -161,6 +161,30 @@ def test_cli_rejects_missing_license_file(tmp_path: Path) -> None:
     )
 
 
+def test_cli_rejects_symlinked_license_file(tmp_path: Path) -> None:
+    target_path = tmp_path / "LICENSE.target"
+    link_path = tmp_path / "LICENSE.link"
+    target_path.write_text("Example license", encoding="utf-8")
+    try:
+        link_path.symlink_to(target_path)
+    except (NotImplementedError, OSError) as error:
+        pytest.skip(f"Symlink creation is not available in this environment: {error}")
+
+    _assert_cli_parser_error(
+        [
+            "instantiate",
+            "--name",
+            "my_package",
+            "--output-path",
+            str(tmp_path),
+            "--license-file",
+            str(link_path),
+        ]
+    )
+
+    assert not (tmp_path / "my_package").exists()
+
+
 def test_cli_rejects_invalid_owner_name(tmp_path: Path) -> None:
     _assert_cli_parser_error(
         [

@@ -20,6 +20,7 @@ from base_pattern_engine.engine import (
     _reject_filesystem_links,
     _rewrite_generated_license,
     _validate_copy_sources,
+    _validate_generated_output,
 )
 
 
@@ -124,6 +125,8 @@ def test_instantiate_rewrites_package_identity(tmp_path: Path) -> None:
     assert "base-pattern-engine" not in all_text
     assert "Base Pattern Engine" not in all_text
     assert "George Iordanescu" not in all_text
+    assert "<package_" not in all_text
+    assert "<generated_" not in all_text
     assert "Package contributors" in all_text
     assert "my_package" in all_text
     assert "my-package" in all_text
@@ -267,6 +270,29 @@ def test_instantiate_overwrites_existing_output(tmp_path: Path) -> None:
     assert (overwritten_path / "src" / "my_package" / "core.py").is_file()
 
 
+def test_instantiate_restores_existing_output_when_overwrite_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created_path = instantiate("my_package", output_path=str(tmp_path))
+    preserved_file = created_path / "preserved.txt"
+    preserved_file.write_text("original content", encoding="utf-8")
+
+    def fail_generated_output_validation(project_dir: Path) -> None:
+        raise ValueError("forced generated output validation failure")
+
+    monkeypatch.setattr(
+        engine_module,
+        "_validate_generated_output",
+        fail_generated_output_validation,
+    )
+
+    with pytest.raises(ValueError, match="forced generated output validation failure"):
+        engine_module.instantiate("my_package", output_path=str(tmp_path), overwrite=True)
+
+    assert preserved_file.read_text(encoding="utf-8") == "original content"
+    assert not list(tmp_path.glob(".my_package.overwrite-backup-*"))
+
+
 def test_instantiate_accepts_all_arguments_when_overwriting(tmp_path: Path) -> None:
     created_path = instantiate("all_arguments", output_path=str(tmp_path))
     stale_file = created_path / "stale.txt"
@@ -363,13 +389,22 @@ def test_generated_license_rewrite_requires_copyright_notice(tmp_path: Path) -> 
     assert license_path.read_text(encoding="utf-8") == "MIT License\n"
 
 
-@pytest.mark.parametrize("owner_name", ["", "  ", "Package\ncontributors"])
+def test_generated_output_validation_rejects_unresolved_placeholders(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("# <package_title>\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unresolved template placeholders"):
+        _validate_generated_output(project_dir)
+
+
+@pytest.mark.parametrize("owner_name", ["", "  ", "Package\ncontributors", "Package\tcontributors"])
 def test_instantiate_rejects_invalid_owner_name(tmp_path: Path, owner_name: str) -> None:
     with pytest.raises(ValueError, match="Owner name"):
         instantiate("my_package", output_path=str(tmp_path), owner_name=owner_name)
 
 
-@pytest.mark.parametrize("license_type", ["", "  ", "MIT\nApache-2.0"])
+@pytest.mark.parametrize("license_type", ["", "  ", "MIT\nApache-2.0", "MIT\tApache-2.0"])
 def test_instantiate_rejects_invalid_license_type(tmp_path: Path, license_type: str) -> None:
     with pytest.raises(ValueError, match="License"):
         instantiate("my_package", output_path=str(tmp_path), license_type=license_type)
@@ -424,6 +459,22 @@ def test_instantiate_rejects_overwrite_with_invalid_marker(tmp_path: Path) -> No
 
     with pytest.raises(FileExistsError, match="invalid marker"):
         instantiate("my_package", output_path=str(tmp_path), overwrite=True)
+
+
+def test_instantiate_rejects_overwrite_target_containing_symlink(tmp_path: Path) -> None:
+    created_path = instantiate("my_package", output_path=str(tmp_path))
+    target_path = tmp_path / "target.txt"
+    link_path = created_path / "linked.txt"
+    target_path.write_text("target", encoding="utf-8")
+    try:
+        link_path.symlink_to(target_path)
+    except (NotImplementedError, OSError) as error:
+        pytest.skip(f"Symlink creation is not available in this environment: {error}")
+
+    with pytest.raises(FileExistsError, match="symlink or junction"):
+        instantiate("my_package", output_path=str(tmp_path), overwrite=True)
+
+    assert link_path.is_symlink()
 
 
 def test_instantiate_rejects_overwrite_of_non_directory_output(tmp_path: Path) -> None:

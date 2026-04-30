@@ -4,7 +4,7 @@
 
 - [ ] Close remaining filesystem time-of-check/time-of-use windows.
   - Current filesystem-link validation happens before `shutil.copytree`, so a concurrently modified source tree could theoretically change between validation and copying.
-  - Current overwrite-target validation happens before `shutil.rmtree`, so a concurrently modified output tree could theoretically change between validation and deletion.
+  - Overwrite now moves the marked target to a same-parent backup path and revalidates that backup before deleting it, but a concurrently writable output parent can still create narrow races around backup cleanup and partial-output cleanup.
   - For a hardened implementation, copy into a temporary staging directory, validate the staged tree for filesystem links and unexpected files, then atomically move or rewrite from the validated staging directory.
   - Keep this as a future hardening item unless the engine starts processing untrusted or concurrently writable source trees.
 
@@ -66,6 +66,7 @@ This is a larger direction than the current minimal package instantiation engine
   - Confirm generated package imports without the source engine installed.
   - Confirm generated package metadata has the target distribution name.
   - Confirm no generator-only modules, CLI scripts, or `_self` bundle remain.
+  - [x] Confirm no unresolved package-template placeholders remain in generated text files.
   - Confirm no source identity leaks remain in generated Python, TOML, or docs except where explicitly allowed.
 
 - [ ] Expand tests around transformation safety.
