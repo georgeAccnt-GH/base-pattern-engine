@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import tomlkit
@@ -16,12 +17,17 @@ from base_pattern_engine import instantiate, print_package_name
 from base_pattern_engine.engine import (
     MARKER_FILE_NAME,
     MARKER_FORMAT_VERSION,
+    _is_filesystem_link,
     _metadata_source_paths,
     _reject_filesystem_links,
     _rewrite_generated_license,
     _validate_copy_sources,
     _validate_generated_output,
 )
+
+
+def _parse_toml(text: str) -> Any:
+    return cast(Any, tomlkit.parse(text))
 
 
 def test_instantiate_creates_standalone_package(tmp_path: Path) -> None:
@@ -34,6 +40,52 @@ def test_instantiate_creates_standalone_package(tmp_path: Path) -> None:
     assert (created_path / MARKER_FILE_NAME).is_file()
     assert (created_path / "src" / "my_package" / "__init__.py").is_file()
     assert (created_path / "src" / "my_package" / "core.py").is_file()
+
+
+def test_instantiate_accepts_explicit_package_artifact_kind(tmp_path: Path) -> None:
+    created_path = instantiate(
+        "my_package",
+        output_path=str(tmp_path),
+        artifact_kind="package",
+    )
+
+    assert (created_path / "pyproject.toml").is_file()
+    assert (created_path / "src" / "my_package" / "core.py").is_file()
+
+
+def test_instantiate_creates_source_tree_artifact(tmp_path: Path) -> None:
+    created_path = instantiate(
+        "my_code",
+        output_path=str(tmp_path),
+        artifact_kind="source-tree",
+    )
+    package_path = created_path / "src" / "my_code"
+    readme_text = (created_path / "README.md").read_text(encoding="utf-8")
+    all_text = "\n".join(
+        file_path.read_text(encoding="utf-8")
+        for file_path in created_path.rglob("*")
+        if file_path.is_file()
+    )
+
+    assert created_path == tmp_path / "my_code"
+    assert not (created_path / "pyproject.toml").exists()
+    assert (created_path / "LICENSE").is_file()
+    assert (created_path / "README.md").is_file()
+    assert (created_path / MARKER_FILE_NAME).is_file()
+    assert (package_path / "__init__.py").is_file()
+    assert (package_path / "core.py").is_file()
+    assert not (package_path / "engine.py").exists()
+    assert not (package_path / "cli.py").exists()
+    assert not (package_path / "_self").exists()
+    assert "python -m pip install ." not in readme_text
+    assert "PYTHONPATH" in readme_text
+    assert "src/my_code/" in readme_text
+    assert "pyproject.toml" not in readme_text
+    assert "base_pattern_engine" not in all_text
+    assert "base-pattern-engine" not in all_text
+    assert "Base Pattern Engine" not in all_text
+    assert "<package_" not in all_text
+    assert "<generated_" not in all_text
 
 
 def test_instantiate_writes_matching_generation_marker(tmp_path: Path) -> None:
@@ -53,7 +105,7 @@ def test_packaged_fallback_metadata_has_no_source_identity() -> None:
     fallback_metadata_dir = repository_root / "src" / "base_pattern_engine" / "_self"
     fallback_pyproject_text = (fallback_metadata_dir / "pyproject.toml").read_text(encoding="utf-8")
     fallback_license_text = (fallback_metadata_dir / "LICENSE").read_text(encoding="utf-8")
-    fallback_pyproject = tomlkit.parse(fallback_pyproject_text)
+    fallback_pyproject = _parse_toml(fallback_pyproject_text)
 
     assert fallback_pyproject["project"]["name"] == "<package_distribution_name>"
     assert (
@@ -89,7 +141,7 @@ def test_instantiate_from_packaged_fallback_has_no_source_identity(
         if file_path.is_file()
     )
 
-    pyproject = tomlkit.parse((created_path / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = _parse_toml((created_path / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["project"]["name"] == "fallback-package"
     assert pyproject["project"]["authors"] == [{"name": "Package contributors"}]
     assert "<package_" not in all_text
@@ -205,6 +257,39 @@ def test_generated_package_can_be_pip_installed_independently(tmp_path: Path) ->
     assert import_result.stdout == "my-package\n"
 
 
+def test_generated_source_tree_can_be_imported_independently(tmp_path: Path) -> None:
+    created_path = instantiate(
+        "my_code",
+        output_path=str(tmp_path),
+        artifact_kind="source-tree",
+    )
+    run_env = os.environ.copy()
+    run_env.pop("PYTHONPATH", None)
+    run_env["PYTHONPATH"] = str(created_path / "src")
+
+    import_result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            "import importlib.util, my_code; "
+            "assert my_code.PACKAGE_NAME == 'my-code'; "
+            "assert not hasattr(my_code, 'instantiate'); "
+            "assert importlib.util.find_spec('base_pattern_engine') is None; "
+            "assert importlib.util.find_spec('my_code.engine') is None; "
+            "assert importlib.util.find_spec('my_code.cli') is None; "
+            "my_code.print_package_name()",
+        ],
+        cwd=tmp_path,
+        env=run_env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert import_result.returncode == 0, import_result.stderr
+    assert import_result.stdout == "my-code\n"
+
+
 def test_instantiated_package_has_no_instantiation_interface(tmp_path: Path) -> None:
     created_path = instantiate("my_package", output_path=str(tmp_path))
     package_path = created_path / "src" / "my_package"
@@ -235,7 +320,7 @@ def test_instantiated_package_has_no_instantiation_interface(tmp_path: Path) -> 
 def test_instantiated_pyproject_is_standalone_metadata(tmp_path: Path) -> None:
     created_path = instantiate("my_package", output_path=str(tmp_path))
 
-    pyproject = tomlkit.parse((created_path / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = _parse_toml((created_path / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["name"] == "my-package"
     assert (
@@ -268,6 +353,28 @@ def test_instantiate_overwrites_existing_output(tmp_path: Path) -> None:
     assert overwritten_path == created_path
     assert not stale_file.exists()
     assert (overwritten_path / "src" / "my_package" / "core.py").is_file()
+
+
+def test_instantiate_overwrites_existing_source_tree_output(tmp_path: Path) -> None:
+    created_path = instantiate(
+        "my_code",
+        output_path=str(tmp_path),
+        artifact_kind="source-tree",
+    )
+    stale_file = created_path / "stale.txt"
+    stale_file.write_text("old content", encoding="utf-8")
+
+    overwritten_path = instantiate(
+        "my_code",
+        output_path=str(tmp_path),
+        overwrite=True,
+        artifact_kind="source-tree",
+    )
+
+    assert overwritten_path == created_path
+    assert not stale_file.exists()
+    assert not (overwritten_path / "pyproject.toml").exists()
+    assert (overwritten_path / "src" / "my_code" / "core.py").is_file()
 
 
 def test_instantiate_restores_existing_output_when_overwrite_fails(
@@ -319,7 +426,7 @@ def test_instantiate_uses_custom_generated_owner(tmp_path: Path) -> None:
         owner_name="Example Organization",
     )
 
-    pyproject = tomlkit.parse((created_path / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = _parse_toml((created_path / "pyproject.toml").read_text(encoding="utf-8"))
     license_text = (created_path / "LICENSE").read_text(encoding="utf-8")
 
     assert pyproject["project"]["authors"] == [{"name": "Example Organization"}]
@@ -330,7 +437,7 @@ def test_instantiate_uses_custom_generated_owner(tmp_path: Path) -> None:
 def test_instantiate_can_omit_generated_license(tmp_path: Path) -> None:
     created_path = instantiate("unlicensed_package", output_path=str(tmp_path), license_type="NONE")
 
-    pyproject = tomlkit.parse((created_path / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = _parse_toml((created_path / "pyproject.toml").read_text(encoding="utf-8"))
     readme_text = (created_path / "README.md").read_text(encoding="utf-8")
 
     assert not (created_path / "LICENSE").exists()
@@ -348,7 +455,7 @@ def test_instantiate_uses_custom_license_expression_without_file(tmp_path: Path)
         license_type="Apache-2.0",
     )
 
-    pyproject = tomlkit.parse((created_path / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = _parse_toml((created_path / "pyproject.toml").read_text(encoding="utf-8"))
     readme_text = (created_path / "README.md").read_text(encoding="utf-8")
 
     assert not (created_path / "LICENSE").exists()
@@ -359,6 +466,41 @@ def test_instantiate_uses_custom_license_expression_without_file(tmp_path: Path)
     assert "  LICENSE" not in readme_text
 
 
+def test_source_tree_custom_license_expression_has_no_package_metadata(tmp_path: Path) -> None:
+    created_path = instantiate(
+        "source_license",
+        output_path=str(tmp_path),
+        artifact_kind="source-tree",
+        license_type="Apache-2.0",
+    )
+    readme_text = (created_path / "README.md").read_text(encoding="utf-8")
+
+    assert not (created_path / "pyproject.toml").exists()
+    assert not (created_path / "LICENSE").exists()
+    assert "Apache-2.0" in readme_text
+    assert "  LICENSE" not in readme_text
+
+
+def test_source_tree_custom_license_text_writes_license_without_package_metadata(
+    tmp_path: Path,
+) -> None:
+    created_path = instantiate(
+        "source_custom_license",
+        output_path=str(tmp_path),
+        artifact_kind="source-tree",
+        license_type="Example-License",
+        license_text="Example source-tree license text",
+    )
+    readme_text = (created_path / "README.md").read_text(encoding="utf-8")
+
+    assert not (created_path / "pyproject.toml").exists()
+    assert (created_path / "LICENSE").read_text(encoding="utf-8") == (
+        "Example source-tree license text\n"
+    )
+    assert "Example-License" in readme_text
+    assert "  LICENSE" in readme_text
+
+
 def test_instantiate_uses_custom_license_text(tmp_path: Path) -> None:
     created_path = instantiate(
         "custom_license_package",
@@ -367,7 +509,7 @@ def test_instantiate_uses_custom_license_text(tmp_path: Path) -> None:
         license_text="Example custom license text",
     )
 
-    pyproject = tomlkit.parse((created_path / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = _parse_toml((created_path / "pyproject.toml").read_text(encoding="utf-8"))
     license_text = (created_path / "LICENSE").read_text(encoding="utf-8")
     readme_text = (created_path / "README.md").read_text(encoding="utf-8")
 
@@ -421,6 +563,20 @@ def test_instantiate_rejects_invalid_license_text(tmp_path: Path, license_text: 
         )
 
 
+@pytest.mark.parametrize("license_text", ["Example\x00License", "Example\x1bLicense"])
+def test_instantiate_rejects_license_text_control_characters(
+    tmp_path: Path,
+    license_text: str,
+) -> None:
+    with pytest.raises(ValueError, match="License text"):
+        instantiate(
+            "my_package",
+            output_path=str(tmp_path),
+            license_type="Custom-License",
+            license_text=license_text,
+        )
+
+
 def test_instantiate_rejects_license_text_without_license(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="License text"):
         instantiate(
@@ -429,6 +585,15 @@ def test_instantiate_rejects_license_text_without_license(tmp_path: Path) -> Non
             license_type="NONE",
             license_text="No license text",
         )
+
+
+@pytest.mark.parametrize("artifact_kind", ["", "wheel", "SOURCE-TREE"])
+def test_instantiate_rejects_invalid_artifact_kind(
+    tmp_path: Path,
+    artifact_kind: str,
+) -> None:
+    with pytest.raises(ValueError, match="Artifact kind"):
+        instantiate("my_package", output_path=str(tmp_path), artifact_kind=artifact_kind)
 
 
 def test_instantiate_rejects_overwrite_of_unmarked_directory(tmp_path: Path) -> None:
@@ -506,6 +671,32 @@ def test_reject_filesystem_links_rejects_windows_junction(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="junction"):
         _reject_filesystem_links(tmp_path)
+
+
+def test_filesystem_link_detection_rejects_windows_reparse_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reparse_point_attribute = 0x400
+
+    class FakeStat:
+        st_file_attributes = reparse_point_attribute
+
+    class FakePath:
+        def is_symlink(self) -> bool:
+            return False
+
+        def lstat(self) -> FakeStat:
+            return FakeStat()
+
+    monkeypatch.setattr(engine_module.os, "name", "nt")
+    monkeypatch.setattr(
+        engine_module.stat,
+        "FILE_ATTRIBUTE_REPARSE_POINT",
+        reparse_point_attribute,
+        raising=False,
+    )
+
+    assert _is_filesystem_link(cast(Path, FakePath())) is True
 
 
 def test_instantiate_rejects_overwrite_of_windows_junction(tmp_path: Path) -> None:

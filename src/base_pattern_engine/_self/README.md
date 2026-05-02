@@ -4,13 +4,9 @@ A standalone Python package generated from a package instantiation pattern.
 
 This package contains its own source code and metadata. It does not depend on the package that generated it, and it does not include the generator's instantiation interface.
 
-## Install
+## Use
 
-From this package directory:
-
-```shell
-python -m pip install .
-```
+<generated_usage_section>
 
 ## Python Interface
 
@@ -35,10 +31,7 @@ print_package_name()
 
 ```text
 <package_distribution_name>/
-  pyproject.toml
-<generated_license_and_readme_file_lines>
-  <generated_marker_file_name>
-  src/<package_import_name>/
+<generated_package_structure_lines>
 ```
 
 ## License

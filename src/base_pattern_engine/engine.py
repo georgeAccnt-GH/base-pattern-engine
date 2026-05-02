@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import keyword
+import os
 import re
 import shutil
+import stat
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,10 @@ SOURCE_DESCRIPTION = "A minimal Python package instantiation engine."
 GENERATED_DESCRIPTION = "A standalone Python package generated from a package instantiation pattern."
 DEFAULT_OWNER_NAME = "Package contributors"
 DEFAULT_LICENSE_TYPE = "MIT"
+DEFAULT_ARTIFACT_KIND = "package"
+PACKAGE_ARTIFACT_KIND = "package"
+SOURCE_TREE_ARTIFACT_KIND = "source-tree"
+ARTIFACT_KINDS = (PACKAGE_ARTIFACT_KIND, SOURCE_TREE_ARTIFACT_KIND)
 MIT_LICENSE_TYPE = "MIT"
 NO_LICENSE_TYPE = "NONE"
 MIT_LICENSE_CLASSIFIER = "License :: OSI Approved :: MIT License"
@@ -70,16 +76,22 @@ def instantiate(
     overwrite: bool = False,
     owner_name: str = DEFAULT_OWNER_NAME,
     license_text: Optional[str] = None,
+    artifact_kind: str = DEFAULT_ARTIFACT_KIND,
 ) -> Path:
-    """Create a new standalone Python package from this installed package."""
+    """Create a new standalone Python package or source tree from this installed package."""
 
     target = _package_identity(package_name)
+    normalized_artifact_kind = _normalize_artifact_kind(artifact_kind)
     normalized_owner_name = _normalize_owner_name(owner_name)
     license_selection = _license_selection(license_type, license_text)
 
     source_package_dir = Path(__file__).resolve().parent
     metadata_source_dir = _metadata_source_dir(source_package_dir)
-    metadata_source_paths = _metadata_source_paths(metadata_source_dir, source_package_dir)
+    metadata_source_paths = _metadata_source_paths(
+        metadata_source_dir,
+        source_package_dir,
+        _root_file_names_for_artifact(normalized_artifact_kind, license_selection),
+    )
     _validate_copy_sources(source_package_dir, metadata_source_paths)
     project_dir = Path(output_path).expanduser().resolve() / target.module_name
     backup_dir: Optional[Path] = None
@@ -106,13 +118,18 @@ def instantiate(
             ignore=shutil.ignore_patterns(*IGNORED_COPY_PATTERNS),
         )
 
-        _rewrite_text_files(project_dir, _text_replacements(target, license_selection))
+        _rewrite_text_files(
+            project_dir,
+            _text_replacements(target, license_selection, normalized_artifact_kind),
+        )
         _strip_instantiation_interface(
             project_dir,
             destination_package_dir,
             normalized_owner_name,
             license_selection,
+            normalized_artifact_kind,
         )
+        _validate_artifact_output(project_dir, normalized_artifact_kind)
         _validate_generated_output(project_dir)
         _write_generation_marker(project_dir, target)
     except Exception:
@@ -134,13 +151,35 @@ def _package_identity(package_name: str) -> _PackageIdentity:
     )
 
 
-def _text_replacements(target: _PackageIdentity, license_selection: _LicenseSelection) -> dict[str, str]:
+def _normalize_artifact_kind(artifact_kind: str) -> str:
+    try:
+        normalized_artifact_kind = artifact_kind.strip()
+    except AttributeError as error:
+        raise ValueError("Artifact kind must be a string.") from error
+
+    if normalized_artifact_kind not in ARTIFACT_KINDS:
+        allowed_values = ", ".join(ARTIFACT_KINDS)
+        raise ValueError(
+            f"Artifact kind must be one of: {allowed_values}. Got: {artifact_kind!r}"
+        )
+
+    return normalized_artifact_kind
+
+
+def _text_replacements(
+    target: _PackageIdentity,
+    license_selection: _LicenseSelection,
+    artifact_kind: str,
+) -> dict[str, str]:
     return {
         "<package_import_name>": target.module_name,
         "<package_distribution_name>": target.distribution_name,
         "<package_title>": target.title,
-        "<generated_license_and_readme_file_lines>": _license_and_readme_file_lines(
-            license_selection
+        "<generated_usage_section>": _generated_usage_section(target, artifact_kind),
+        "<generated_package_structure_lines>": _generated_package_structure_lines(
+            target,
+            license_selection,
+            artifact_kind,
         ),
         "<generated_license_label>": license_selection.readme_label,
         SOURCE_MODULE_NAME: target.module_name,
@@ -151,11 +190,35 @@ def _text_replacements(target: _PackageIdentity, license_selection: _LicenseSele
     }
 
 
-def _license_and_readme_file_lines(license_selection: _LicenseSelection) -> str:
-    if license_selection.include_file:
-        return "  LICENSE\n  README.md"
+def _generated_usage_section(target: _PackageIdentity, artifact_kind: str) -> str:
+    if artifact_kind == SOURCE_TREE_ARTIFACT_KIND:
+        return (
+            "Add the `src` directory to `PYTHONPATH` when running Python code, or copy "
+            f"`src/{target.module_name}/` into another project that manages packaging."
+        )
 
-    return "  README.md"
+    return "From this package directory:\n\n```shell\npython -m pip install .\n```"
+
+
+def _generated_package_structure_lines(
+    target: _PackageIdentity,
+    license_selection: _LicenseSelection,
+    artifact_kind: str,
+) -> str:
+    structure_lines = []
+    if artifact_kind == PACKAGE_ARTIFACT_KIND:
+        structure_lines.append("  pyproject.toml")
+    if license_selection.include_file:
+        structure_lines.append("  LICENSE")
+    structure_lines.extend(
+        [
+            "  README.md",
+            f"  {MARKER_FILE_NAME}",
+            f"  src/{target.module_name}/",
+        ]
+    )
+
+    return "\n".join(structure_lines)
 
 
 def _metadata_source_dir(source_package_dir: Path) -> Path:
@@ -163,21 +226,38 @@ def _metadata_source_dir(source_package_dir: Path) -> Path:
     return source_project_root or source_package_dir / "_self"
 
 
-def _metadata_source_paths(metadata_source_dir: Path, source_package_dir: Path) -> dict[str, Path]:
+def _metadata_source_paths(
+    metadata_source_dir: Path,
+    source_package_dir: Path,
+    root_file_names: tuple[str, ...] = ROOT_FILE_NAMES,
+) -> dict[str, Path]:
     return {
         root_file_name: _project_metadata_source_path(
             metadata_source_dir,
             source_package_dir,
             root_file_name,
         )
-        for root_file_name in ROOT_FILE_NAMES
+        for root_file_name in root_file_names
     }
 
 
 def _copy_project_files(metadata_source_paths: dict[str, Path], project_dir: Path) -> None:
-    for root_file_name in ROOT_FILE_NAMES:
+    for root_file_name in metadata_source_paths:
         source_path = metadata_source_paths[root_file_name]
         shutil.copy2(source_path, project_dir / root_file_name)
+
+
+def _root_file_names_for_artifact(
+    artifact_kind: str,
+    license_selection: _LicenseSelection,
+) -> tuple[str, ...]:
+    if artifact_kind == PACKAGE_ARTIFACT_KIND:
+        return ROOT_FILE_NAMES
+
+    if license_selection.include_file:
+        return ("LICENSE", "README.md")
+
+    return ("README.md",)
 
 
 def _validate_copy_sources(source_package_dir: Path, metadata_source_paths: dict[str, Path]) -> None:
@@ -214,9 +294,14 @@ def _reject_filesystem_links(path: Path) -> None:
     if not path.is_dir():
         return
 
-    for candidate_path in path.rglob("*"):
-        if _is_filesystem_link(candidate_path):
-            raise ValueError(f"Refusing to copy symlink or junction: {candidate_path}")
+    pending_dirs = [path]
+    while pending_dirs:
+        current_dir = pending_dirs.pop()
+        for candidate_path in current_dir.iterdir():
+            if _is_filesystem_link(candidate_path):
+                raise ValueError(f"Refusing to copy symlink or junction: {candidate_path}")
+            if candidate_path.is_dir():
+                pending_dirs.append(candidate_path)
 
 
 def _is_filesystem_link(path: Path) -> bool:
@@ -224,7 +309,20 @@ def _is_filesystem_link(path: Path) -> bool:
         return True
 
     is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
+    return bool(is_junction and is_junction()) or _is_windows_reparse_point(path)
+
+
+def _is_windows_reparse_point(path: Path) -> bool:
+    if os.name != "nt":
+        return False
+
+    try:
+        file_attributes = path.lstat().st_file_attributes
+    except (AttributeError, OSError):
+        return False
+
+    reparse_point_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(file_attributes & reparse_point_attribute)
 
 
 def _move_overwrite_target_to_backup(project_dir: Path, target: _PackageIdentity) -> Path:
@@ -398,6 +496,10 @@ def _normalize_license_text(license_text: Optional[str]) -> Optional[str]:
     normalized_license_text = license_text.replace("\r\n", "\n").replace("\r", "\n")
     if not normalized_license_text.strip():
         raise ValueError("License text cannot be empty.")
+    if _contains_disallowed_license_text_control_character(normalized_license_text):
+        raise ValueError(
+            "License text cannot contain control characters other than tabs or newlines."
+        )
     if not normalized_license_text.endswith("\n"):
         normalized_license_text += "\n"
 
@@ -406,6 +508,13 @@ def _normalize_license_text(license_text: Optional[str]) -> Optional[str]:
 
 def _contains_control_character(value: str) -> bool:
     return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def _contains_disallowed_license_text_control_character(value: str) -> bool:
+    return any(
+        (ord(character) < 32 and character not in "\n\t") or ord(character) == 127
+        for character in value
+    )
 
 
 def _title_from_module_name(module_name: str) -> str:
@@ -457,6 +566,7 @@ def _strip_instantiation_interface(
     package_dir: Path,
     owner_name: str,
     license_selection: _LicenseSelection,
+    artifact_kind: str,
 ) -> None:
     for relative_path in ("engine.py", "cli.py"):
         file_path = package_dir / relative_path
@@ -468,8 +578,26 @@ def _strip_instantiation_interface(
         shutil.rmtree(bundled_metadata_dir)
 
     (package_dir / "__init__.py").write_text(GENERATED_INIT_TEMPLATE, encoding="utf-8")
-    _transform_generated_pyproject(project_dir / "pyproject.toml", owner_name, license_selection)
+    if artifact_kind == PACKAGE_ARTIFACT_KIND:
+        _transform_generated_pyproject(
+            project_dir / "pyproject.toml",
+            owner_name,
+            license_selection,
+        )
     _apply_generated_license(project_dir / "LICENSE", owner_name, license_selection)
+
+
+def _validate_artifact_output(project_dir: Path, artifact_kind: str) -> None:
+    if artifact_kind != SOURCE_TREE_ARTIFACT_KIND:
+        return
+
+    package_metadata_files = ("pyproject.toml", "setup.py", "setup.cfg", "MANIFEST.in")
+    unexpected_files = [
+        file_name for file_name in package_metadata_files if (project_dir / file_name).exists()
+    ]
+    if unexpected_files:
+        unexpected_list = ", ".join(unexpected_files)
+        raise ValueError(f"Source-tree output contains package build metadata: {unexpected_list}")
 
 
 def _transform_generated_pyproject(

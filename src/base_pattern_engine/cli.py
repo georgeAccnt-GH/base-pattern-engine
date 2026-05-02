@@ -6,19 +6,26 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from .engine import DEFAULT_LICENSE_TYPE, DEFAULT_OWNER_NAME, _is_filesystem_link, instantiate
+from .engine import (
+    ARTIFACT_KINDS,
+    DEFAULT_ARTIFACT_KIND,
+    DEFAULT_LICENSE_TYPE,
+    DEFAULT_OWNER_NAME,
+    _is_filesystem_link,
+    instantiate,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="base-pattern-engine",
-        description="Instantiate a standalone Python package from this installed package.",
+        description="Instantiate a standalone Python package or source tree from this installed package.",
     )
     subparsers = parser.add_subparsers(dest="command")
 
     instantiate_parser = subparsers.add_parser(
         "instantiate",
-        help="Create a new independent package.",
+        help="Create a new independent artifact.",
     )
     instantiate_parser.add_argument(
         "--name",
@@ -32,14 +39,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory where the new project folder will be created.",
     )
     instantiate_parser.add_argument(
+        "--artifact-kind",
+        choices=ARTIFACT_KINDS,
+        default=DEFAULT_ARTIFACT_KIND,
+        help="Generated artifact kind: package or source-tree.",
+    )
+    instantiate_parser.add_argument(
         "--license",
         dest="license_type",
         default=DEFAULT_LICENSE_TYPE,
-        help="Generated package license expression. Use NONE to omit license metadata and the LICENSE file.",
+        help="Generated artifact license expression. Use NONE to omit license metadata and the LICENSE file.",
     )
     instantiate_parser.add_argument(
         "--license-file",
-        help="Path to custom license text to write as the generated package LICENSE file.",
+        help="Path to custom license text to write as the generated artifact LICENSE file.",
     )
     instantiate_parser.add_argument(
         "--owner-name",
@@ -49,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     instantiate_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace the generated package directory if it already exists.",
+        help="Replace the generated artifact directory if it already exists.",
     )
 
     return parser
@@ -69,6 +82,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 overwrite=args.overwrite,
                 owner_name=args.owner_name,
                 license_text=license_text,
+                artifact_kind=args.artifact_kind,
             )
         except (FileExistsError, OSError, ValueError) as error:
             parser.error(str(error))

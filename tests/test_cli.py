@@ -38,6 +38,43 @@ def test_cli_uses_current_directory_by_default(tmp_path: Path, monkeypatch) -> N
     assert (tmp_path / "default_location" / "pyproject.toml").is_file()
 
 
+def test_cli_accepts_explicit_package_artifact_kind(tmp_path: Path) -> None:
+    exit_code = cli.main(
+        [
+            "instantiate",
+            "--name",
+            "my_package",
+            "--output-path",
+            str(tmp_path),
+            "--artifact-kind",
+            "package",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "my_package" / "pyproject.toml").is_file()
+
+
+def test_cli_instantiates_source_tree(tmp_path: Path) -> None:
+    exit_code = cli.main(
+        [
+            "instantiate",
+            "--name",
+            "my_code",
+            "--output-path",
+            str(tmp_path),
+            "--artifact-kind",
+            "source-tree",
+        ]
+    )
+
+    assert exit_code == 0
+    assert not (tmp_path / "my_code" / "pyproject.toml").exists()
+    assert (tmp_path / "my_code" / "README.md").is_file()
+    assert (tmp_path / "my_code" / "src" / "my_code" / "core.py").is_file()
+    assert not (tmp_path / "my_code" / "src" / "my_code" / "cli.py").exists()
+
+
 def test_cli_all_options_overwrite_replaces_existing_package(tmp_path: Path) -> None:
     cli.main(["instantiate", "--name", "all_arguments", "--output-path", str(tmp_path)])
     stale_file = tmp_path / "all_arguments" / "stale.txt"
@@ -52,6 +89,8 @@ def test_cli_all_options_overwrite_replaces_existing_package(tmp_path: Path) -> 
             "all_arguments",
             "--output-path",
             str(tmp_path),
+            "--artifact-kind",
+            "package",
             "--license",
             "Apache-2.0",
             "--license-file",
@@ -129,6 +168,20 @@ def test_cli_rejects_unknown_option(tmp_path: Path) -> None:
             "--output-path",
             str(tmp_path),
             "--unknown-option",
+        ]
+    )
+
+
+def test_cli_rejects_invalid_artifact_kind(tmp_path: Path) -> None:
+    _assert_cli_parser_error(
+        [
+            "instantiate",
+            "--name",
+            "my_package",
+            "--output-path",
+            str(tmp_path),
+            "--artifact-kind",
+            "wheel",
         ]
     )
 
