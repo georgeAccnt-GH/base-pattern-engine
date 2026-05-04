@@ -214,6 +214,27 @@ def test_cli_rejects_missing_license_file(tmp_path: Path) -> None:
     )
 
 
+def test_cli_rejects_license_file_with_no_license(tmp_path: Path) -> None:
+    license_file = tmp_path / "LICENSE.template"
+    license_file.write_text("Example CLI license", encoding="utf-8")
+
+    _assert_cli_parser_error(
+        [
+            "instantiate",
+            "--name",
+            "my_package",
+            "--output-path",
+            str(tmp_path),
+            "--license",
+            "NONE",
+            "--license-file",
+            str(license_file),
+        ]
+    )
+
+    assert not (tmp_path / "my_package").exists()
+
+
 def test_cli_rejects_symlinked_license_file(tmp_path: Path) -> None:
     target_path = tmp_path / "LICENSE.target"
     link_path = tmp_path / "LICENSE.link"

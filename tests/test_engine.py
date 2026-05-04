@@ -12,8 +12,14 @@ from typing import Any, cast
 import pytest
 import tomlkit
 
+import base_pattern_engine
 import base_pattern_engine.engine as engine_module
-from base_pattern_engine import instantiate, print_package_name
+from base_pattern_engine import (
+    DISTRIBUTION_NAME,
+    MODULE_NAME,
+    instantiate,
+    print_package_identity,
+)
 from base_pattern_engine.engine import (
     MARKER_FILE_NAME,
     MARKER_FORMAT_VERSION,
@@ -184,27 +190,36 @@ def test_instantiate_rewrites_package_identity(tmp_path: Path) -> None:
     assert "my-package" in all_text
 
 
-def test_package_name_method_prints_instantiated_package_name(
+def test_identity_function_prints_instantiated_package_identity(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     created_path = instantiate("my_package", output_path=str(tmp_path))
     generated_src_path = str(created_path / "src")
 
-    print_package_name()
+    print_package_identity()
     source_output = capsys.readouterr().out
+
+    assert MODULE_NAME == "base_pattern_engine"
+    assert DISTRIBUTION_NAME == "base-pattern-engine"
+    assert not hasattr(base_pattern_engine, "PACKAGE_NAME")
+    assert not hasattr(base_pattern_engine, "print_package_name")
 
     sys.path.insert(0, generated_src_path)
     try:
         generated_package = importlib.import_module("my_package")
-        generated_package.print_package_name()
+        generated_package.print_package_identity()
         generated_output = capsys.readouterr().out
+        assert generated_package.MODULE_NAME == "my_package"
+        assert generated_package.DISTRIBUTION_NAME == "my-package"
+        assert not hasattr(generated_package, "PACKAGE_NAME")
+        assert not hasattr(generated_package, "print_package_name")
         assert not hasattr(generated_package, "instantiate")
     finally:
         sys.path.remove(generated_src_path)
         sys.modules.pop("my_package", None)
 
-    assert source_output == "base-pattern-engine\n"
-    assert generated_output == "my-package\n"
+    assert source_output == "module: base_pattern_engine\ndistribution: base-pattern-engine\n"
+    assert generated_output == "module: my_package\ndistribution: my-package\n"
 
 
 def test_generated_package_can_be_pip_installed_independently(tmp_path: Path) -> None:
@@ -241,12 +256,15 @@ def test_generated_package_can_be_pip_installed_independently(tmp_path: Path) ->
             "-S",
             "-c",
             "import importlib.util, my_package; "
-            "assert my_package.PACKAGE_NAME == 'my-package'; "
+            "assert my_package.MODULE_NAME == 'my_package'; "
+            "assert my_package.DISTRIBUTION_NAME == 'my-package'; "
+            "assert not hasattr(my_package, 'PACKAGE_NAME'); "
+            "assert not hasattr(my_package, 'print_package_name'); "
             "assert not hasattr(my_package, 'instantiate'); "
             "assert importlib.util.find_spec('base_pattern_engine') is None; "
             "assert importlib.util.find_spec('my_package.engine') is None; "
             "assert importlib.util.find_spec('my_package.cli') is None; "
-            "my_package.print_package_name()",
+            "my_package.print_package_identity()",
         ],
         cwd=tmp_path,
         env=run_env,
@@ -254,7 +272,7 @@ def test_generated_package_can_be_pip_installed_independently(tmp_path: Path) ->
         text=True,
     )
     assert import_result.returncode == 0, import_result.stderr
-    assert import_result.stdout == "my-package\n"
+    assert import_result.stdout == "module: my_package\ndistribution: my-package\n"
 
 
 def test_generated_source_tree_can_be_imported_independently(tmp_path: Path) -> None:
@@ -273,12 +291,15 @@ def test_generated_source_tree_can_be_imported_independently(tmp_path: Path) -> 
             "-S",
             "-c",
             "import importlib.util, my_code; "
-            "assert my_code.PACKAGE_NAME == 'my-code'; "
+            "assert my_code.MODULE_NAME == 'my_code'; "
+            "assert my_code.DISTRIBUTION_NAME == 'my-code'; "
+            "assert not hasattr(my_code, 'PACKAGE_NAME'); "
+            "assert not hasattr(my_code, 'print_package_name'); "
             "assert not hasattr(my_code, 'instantiate'); "
             "assert importlib.util.find_spec('base_pattern_engine') is None; "
             "assert importlib.util.find_spec('my_code.engine') is None; "
             "assert importlib.util.find_spec('my_code.cli') is None; "
-            "my_code.print_package_name()",
+            "my_code.print_package_identity()",
         ],
         cwd=tmp_path,
         env=run_env,
@@ -287,7 +308,7 @@ def test_generated_source_tree_can_be_imported_independently(tmp_path: Path) -> 
     )
 
     assert import_result.returncode == 0, import_result.stderr
-    assert import_result.stdout == "my-code\n"
+    assert import_result.stdout == "module: my_code\ndistribution: my-code\n"
 
 
 def test_instantiated_package_has_no_instantiation_interface(tmp_path: Path) -> None:
@@ -312,7 +333,9 @@ def test_instantiated_package_has_no_instantiation_interface(tmp_path: Path) -> 
     assert "<package_" not in readme_text
     assert "<generated_" not in readme_text
     assert "# My Package" in readme_text
-    assert "from my_package import PACKAGE_NAME, print_package_name" in readme_text
+    assert "from my_package import DISTRIBUTION_NAME, MODULE_NAME, print_package_identity" in readme_text
+    assert "PACKAGE_NAME" not in readme_text
+    assert "print_package_name" not in readme_text
     assert MARKER_FILE_NAME in readme_text
     assert "my-package/" in readme_text
 

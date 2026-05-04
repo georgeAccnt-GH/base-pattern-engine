@@ -109,7 +109,7 @@ Both artifact kinds rewrite package identity, remove the generator surface, pres
 
 The generated package is standalone and does not retain a runtime dependency on the source package. It is a regular pip-installable package and does not include this engine's generation CLI or `instantiate()` API.
 
-Generated packages expose copied package functionality, such as `PACKAGE_NAME` and `print_package_name()`, but not the instantiation interface. In `base-pattern-engine`, `print_package_name()` prints `base-pattern-engine`; in a generated package, it prints the generated distribution name, such as `my-package`.
+Generated packages expose copied package functionality, such as `MODULE_NAME`, `DISTRIBUTION_NAME`, and `print_package_identity()`, but not the instantiation interface. `MODULE_NAME` is the Python import package name, and `DISTRIBUTION_NAME` is the package distribution name. In `base-pattern-engine`, `print_package_identity()` prints both `base_pattern_engine` and `base-pattern-engine`; in a generated package, it prints both generated values, such as `my_package` and `my-package`.
 
 The `base-pattern-engine` project itself is MIT licensed. Generated packages are intended to be independent generated outputs: the package owner may license, modify, distribute, and use a generated package under the terms they choose, including MIT, Apache-2.0, proprietary terms, or no published license. This generated-output permission applies to material produced from this project; third-party code, data, or assets added later remain subject to their own terms.
 

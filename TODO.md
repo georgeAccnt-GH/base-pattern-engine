@@ -50,7 +50,7 @@ This is a larger direction than the current minimal package instantiation engine
 - [ ] Replace Python string replacement with semantic Python rewriting.
   - Prefer `LibCST` for Python transforms because it preserves comments and formatting better than built-in `ast` plus `ast.unparse()`.
   - Rewrite imports, module references, selected constants, and known public symbols through syntax-aware transforms.
-  - Keep a small fallback for intentionally literal strings such as `PACKAGE_NAME`, where changing the string value is desired.
+  - Keep a small fallback for intentionally literal strings such as `MODULE_NAME` and `DISTRIBUTION_NAME`, where changing the string value is desired.
 
 - [x] Replace line-based TOML edits with TOML-aware edits.
   - Use `tomlkit` so `pyproject.toml` can be updated while preserving formatting and comments.

@@ -35,9 +35,9 @@ MARKER_FORMAT_VERSION = 1
 UNRESOLVED_PLACEHOLDER_PREFIXES = ("<package_", "<generated_")
 GENERATED_INIT_TEMPLATE = '''"""Generated standalone package."""
 
-from .core import PACKAGE_NAME, print_package_name
+from .core import DISTRIBUTION_NAME, MODULE_NAME, print_package_identity
 
-__all__ = ["PACKAGE_NAME", "print_package_name"]
+__all__ = ["DISTRIBUTION_NAME", "MODULE_NAME", "print_package_identity"]
 
 __version__ = "0.1.0"
 '''

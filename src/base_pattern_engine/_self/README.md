@@ -11,20 +11,21 @@ This package contains its own source code and metadata. It does not depend on th
 ## Python Interface
 
 ```python
-from <package_import_name> import PACKAGE_NAME, print_package_name
+from <package_import_name> import DISTRIBUTION_NAME, MODULE_NAME, print_package_identity
 ```
 
 Exposed package interface:
 
-- `PACKAGE_NAME` contains the package distribution name.
-- `print_package_name()` prints `PACKAGE_NAME`.
+- `MODULE_NAME` contains the Python import package name.
+- `DISTRIBUTION_NAME` contains the package distribution name.
+- `print_package_identity()` prints both values.
 
 Example:
 
 ```python
-from <package_import_name> import print_package_name
+from <package_import_name> import print_package_identity
 
-print_package_name()
+print_package_identity()
 ```
 
 ## Package Structure
