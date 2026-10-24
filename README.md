@@ -8,7 +8,7 @@ This repository is a personal project and does not contain any proprietary Micro
 
 - Generates a new `package` artifact or `source-tree` artifact from itself.
 - Produces code with no runtime dependency on the source package.
-- Creates independent generated artifacts that can be extended and licensed separately.
+- Creates independent generated artifacts that can be extended and licensed separately.   
 
 ## Terminology
 
